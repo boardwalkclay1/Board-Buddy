@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Board Buddy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <div class="logo">Board Buddy</div>
+    <div class="object-name" id="objectName">My Board</div>
+  </header>
+
+  <section class="tier-section">
+    <div id="tierLabel" class="tier-label">Connecting…</div>
+    <div class="tier-bar">
+      <div id="tier1" class="tier-dot"></div>
+      <div id="tier2" class="tier-dot"></div>
+      <div id="tier3" class="tier-dot"></div>
+      <div id="tier4" class="tier-dot"></div>
+    </div>
+    <div class="rssi-readout">
+      RSSI: <span id="rssiValue">—</span> dBm
+    </div>
+  </section>
+
+  <section class="controls">
+    <div class="control-block">
+      <label>Object name</label>
+      <div class="row">
+        <input id="nameInput" type="text" placeholder="My Board">
+        <button id="saveName">Save</button>
+      </div>
+    </div>
+
+    <div class="control-block">
+      <label>Distance tiers (RSSI thresholds)</label>
+      <div class="slider-row">
+        <span>Close / Around</span>
+        <input id="thClose" type="range" min="-90" max="-40" step="1">
+        <span id="thCloseVal"></span>
+      </div>
+      <div class="slider-row">
+        <span>Around / Getting far</span>
+        <input id="thAround" type="range" min="-95" max="-45" step="1">
+        <span id="thAroundVal"></span>
+      </div>
+      <div class="slider-row">
+        <span>Getting far / Too far</span>
+        <input id="thFar" type="range" min="-100" max="-50" step="1">
+        <span id="thFarVal"></span>
+      </div>
+      <div class="slider-row">
+        <span>Too far / Out of range</span>
+        <input id="thTooFar" type="range" min="-110" max="-60" step="1">
+        <span id="thTooFarVal"></span>
+      </div>
+      <button id="saveThresholds">Save thresholds</button>
+    </div>
+  </section>
+
+  <section class="graph-section">
+    <label>Signal trend</label>
+    <canvas id="rssiGraph" width="360" height="80"></canvas>
+  </section>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
