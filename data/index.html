@@ -25,6 +25,33 @@
     </div>
   </section>
 
+  <section class="presence-section">
+    <div class="presence-row">
+      <span>Presence:</span>
+      <span id="presenceStatus">No one nearby</span>
+    </div>
+    <div class="presence-row">
+      <span>People:</span>
+      <span id="presenceCount">0</span>
+    </div>
+    <div class="presence-row">
+      <span>Distance:</span>
+      <span id="presenceDistance">— m</span>
+    </div>
+    <div class="presence-row">
+      <span>Presence radius</span>
+      <input id="presenceRange" type="range" min="1" max="6" step="1">
+      <span id="presenceRangeVal"></span>
+    </div>
+    <div class="presence-row">
+      <span>Presence mode</span>
+      <select id="presenceMode">
+        <option value="any">Alert on any person</option>
+        <option value="twoPlus" selected>Ignore 1, alert on 2+</option>
+      </select>
+    </div>
+  </section>
+
   <section class="controls">
     <div class="control-block">
       <label>Object name</label>
@@ -63,6 +90,13 @@
   <section class="graph-section">
     <label>Signal trend</label>
     <canvas id="rssiGraph" width="360" height="80"></canvas>
+  </section>
+
+  <section class="status-section">
+    <div class="status-row">
+      <span>Vibration:</span>
+      <span id="vibrationStatus">None</span>
+    </div>
   </section>
 </div>
 
