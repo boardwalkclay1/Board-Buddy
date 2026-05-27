@@ -1,6 +1,6 @@
 // DOM refs
 const tierLabel = document.getElementById("tierLabel");
-const rssiValueEl = document.getElementById("rssiValue");
+const distanceValueEl = document.getElementById("distanceValue");
 const dots = [
   document.getElementById("tier1"),
   document.getElementById("tier2"),
@@ -12,6 +12,7 @@ const nameEl = document.getElementById("objectName");
 const nameInput = document.getElementById("nameInput");
 const saveNameBtn = document.getElementById("saveName");
 
+// Distance tier sliders (FEET)
 const thClose = document.getElementById("thClose");
 const thAround = document.getElementById("thAround");
 const thFar = document.getElementById("thFar");
@@ -22,6 +23,7 @@ const thFarVal = document.getElementById("thFarVal");
 const thTooFarVal = document.getElementById("thTooFarVal");
 const saveThresholdsBtn = document.getElementById("saveThresholds");
 
+// Presence
 const presenceStatusEl = document.getElementById("presenceStatus");
 const presenceCountEl = document.getElementById("presenceCount");
 const presenceDistanceEl = document.getElementById("presenceDistance");
@@ -29,56 +31,75 @@ const presenceRange = document.getElementById("presenceRange");
 const presenceRangeVal = document.getElementById("presenceRangeVal");
 const presenceMode = document.getElementById("presenceMode");
 
+// Vibration
 const vibrationStatusEl = document.getElementById("vibrationStatus");
 
+// Graph
 const graphCanvas = document.getElementById("rssiGraph");
 const gctx = graphCanvas.getContext("2d");
 
-// State
+// ===================== STATE =====================
 let objectName = localStorage.getItem("boardBuddyName") || "My Board";
 nameEl.innerText = objectName;
 nameInput.value = objectName;
 
+// Distance thresholds in FEET
 let thresholds = JSON.parse(localStorage.getItem("boardBuddyThresholds") || "null") || {
-  close: -60,
-  around: -70,
-  far: -80,
-  tooFar: -90
+  close: 5,
+  around: 15,
+  far: 30,
+  tooFar: 50
 };
 
+// Presence config (FEET)
 let presenceConfig = JSON.parse(localStorage.getItem("boardBuddyPresence") || "null") || {
-  rangeM: 3,
+  rangeFt: 10,
   mode: "twoPlus"
 };
 
-let rssiHistory = [];
+let distanceHistory = [];
 
 let currentTier = "INIT";
 let pendingTier = "INIT";
 let pendingStart = 0;
 
-// UI sync
+// ===================== RSSI → FEET CONVERSION =====================
+function rssiToFeet(rssi) {
+  const RSSI0 = -45; // RSSI at 1 foot (calibrate)
+  const n = 2.0;     // environmental factor
+
+  let meters = Math.pow(10, (RSSI0 - rssi) / (10 * n));
+  let feet = meters * 3.28084;
+
+  if (feet < 0) feet = 0;
+  if (feet > 200) feet = 200;
+
+  return feet;
+}
+
+// ===================== UI SYNC =====================
 function syncThresholdUI() {
   thClose.value = thresholds.close;
   thAround.value = thresholds.around;
   thFar.value = thresholds.far;
   thTooFar.value = thresholds.tooFar;
-  thCloseVal.innerText = thresholds.close + " dBm";
-  thAroundVal.innerText = thresholds.around + " dBm";
-  thFarVal.innerText = thresholds.far + " dBm";
-  thTooFarVal.innerText = thresholds.tooFar + " dBm";
+
+  thCloseVal.innerText = thresholds.close + " ft";
+  thAroundVal.innerText = thresholds.around + " ft";
+  thFarVal.innerText = thresholds.far + " ft";
+  thTooFarVal.innerText = thresholds.tooFar + " ft";
 }
 
 function syncPresenceUI() {
-  presenceRange.value = presenceConfig.rangeM;
-  presenceRangeVal.innerText = presenceConfig.rangeM + " m";
+  presenceRange.value = presenceConfig.rangeFt;
+  presenceRangeVal.innerText = presenceConfig.rangeFt + " ft";
   presenceMode.value = presenceConfig.mode;
 }
 
 syncThresholdUI();
 syncPresenceUI();
 
-// Handlers
+// ===================== HANDLERS =====================
 saveNameBtn.onclick = () => {
   objectName = nameInput.value || "My Board";
   nameEl.innerText = objectName;
@@ -102,7 +123,7 @@ saveThresholdsBtn.onclick = () => {
 };
 
 presenceRange.addEventListener("input", () => {
-  presenceConfig.rangeM = parseInt(presenceRange.value);
+  presenceConfig.rangeFt = parseInt(presenceRange.value);
   syncPresenceUI();
   localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
 });
@@ -112,52 +133,58 @@ presenceMode.addEventListener("change", () => {
   localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
 });
 
-// Notifications + vibration
+// ===================== NOTIFICATIONS =====================
 if ("Notification" in window && Notification.permission === "default") {
   Notification.requestPermission();
 }
 
 function notify(title, body) {
-  if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
   new Notification(title, { body });
 }
 
 function vibrate() {
-  if (!("vibrate" in navigator)) return;
-  navigator.vibrate(400);
+  if ("vibrate" in navigator) navigator.vibrate(400);
 }
 
-// Tier logic
-function tierFromRSSI(rssi) {
-  if (rssi <= -120) return "OUT_RANGE";
-  if (rssi > thresholds.close) return "CLOSE";
-  if (rssi > thresholds.around) return "AROUND";
-  if (rssi > thresholds.far) return "GETTING_FAR";
-  if (rssi > thresholds.tooFar) return "TOO_FAR";
-  return "OUT_RANGE";
+// ===================== TIER LOGIC (FEET) =====================
+function tierFromFeet(ft) {
+  if (ft >= thresholds.tooFar) return "OUT_RANGE";
+  if (ft >= thresholds.far) return "TOO_FAR";
+  if (ft >= thresholds.around) return "GETTING_FAR";
+  if (ft >= thresholds.close) return "AROUND";
+  return "CLOSE";
 }
 
-function applyHysteresis(prev, rssi) {
+function applyHysteresis(prev, ft) {
   const margin = 2;
+
   switch (prev) {
     case "CLOSE":
-      if (rssi < thresholds.close - margin) return tierFromRSSI(rssi);
+      if (ft > thresholds.close + margin) return tierFromFeet(ft);
       return "CLOSE";
+
     case "AROUND":
-      if (rssi > thresholds.close + margin || rssi < thresholds.around - margin) return tierFromRSSI(rssi);
+      if (ft < thresholds.close - margin || ft > thresholds.around + margin)
+        return tierFromFeet(ft);
       return "AROUND";
+
     case "GETTING_FAR":
-      if (rssi > thresholds.around + margin || rssi < thresholds.far - margin) return tierFromRSSI(rssi);
+      if (ft < thresholds.around - margin || ft > thresholds.far + margin)
+        return tierFromFeet(ft);
       return "GETTING_FAR";
+
     case "TOO_FAR":
-      if (rssi > thresholds.far + margin || rssi < thresholds.tooFar - margin) return tierFromRSSI(rssi);
+      if (ft < thresholds.far - margin || ft > thresholds.tooFar + margin)
+        return tierFromFeet(ft);
       return "TOO_FAR";
+
     case "OUT_RANGE":
-      if (rssi > thresholds.tooFar + margin) return tierFromRSSI(rssi);
+      if (ft < thresholds.tooFar - margin) return tierFromFeet(ft);
       return "OUT_RANGE";
+
     default:
-      return tierFromRSSI(rssi);
+      return tierFromFeet(ft);
   }
 }
 
@@ -169,48 +196,51 @@ function setTierUI(tier) {
       tierLabel.innerText = `${objectName} is close by`;
       dots[0].classList.add("active-close");
       break;
+
     case "AROUND":
       tierLabel.innerText = `${objectName} is around you`;
       dots[1].classList.add("active-around");
       break;
+
     case "GETTING_FAR":
       tierLabel.innerText = `${objectName} is getting far`;
       dots[2].classList.add("active-far");
       notify("Board Buddy", `${objectName} is getting far`);
       vibrate();
       break;
+
     case "TOO_FAR":
       tierLabel.innerText = `${objectName} is too far`;
       dots[3].classList.add("active-too");
       notify("Board Buddy", `${objectName} is too far`);
       vibrate();
       break;
+
     case "OUT_RANGE":
       tierLabel.innerText = `${objectName} is OUT OF RANGE`;
       dots[3].classList.add("active-too");
       notify("Board Buddy ALERT", `${objectName} is OUT OF RANGE`);
       vibrate();
       break;
-    default:
-      tierLabel.innerText = "Connecting…";
   }
 }
 
-// Graph
-function drawGraph(rssi) {
-  rssiHistory.push(rssi);
-  if (rssiHistory.length > 60) rssiHistory.shift();
+// ===================== GRAPH (FEET) =====================
+function drawGraph(ft) {
+  distanceHistory.push(ft);
+  if (distanceHistory.length > 60) distanceHistory.shift();
 
   gctx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
   gctx.strokeStyle = "#d4af37";
   gctx.lineWidth = 2;
   gctx.beginPath();
 
-  const minR = -110;
-  const maxR = -40;
-  rssiHistory.forEach((v, i) => {
+  const minF = 0;
+  const maxF = 100;
+
+  distanceHistory.forEach((v, i) => {
     const x = (i / 59) * (graphCanvas.width - 4) + 2;
-    const norm = (v - minR) / (maxR - minR);
+    const norm = (v - minF) / (maxF - minF);
     const y = graphCanvas.height - 4 - norm * (graphCanvas.height - 8);
     if (i === 0) gctx.moveTo(x, y);
     else gctx.lineTo(x, y);
@@ -219,12 +249,12 @@ function drawGraph(rssi) {
   gctx.stroke();
 }
 
-// 2-second stability for tier changes
-function processTier(rssi) {
+// ===================== 2-SECOND STABILITY =====================
+function processTier(ft) {
   const now = Date.now();
 
-  let target = tierFromRSSI(rssi);
-  target = applyHysteresis(currentTier, rssi);
+  let target = tierFromFeet(ft);
+  target = applyHysteresis(currentTier, ft);
 
   if (target !== pendingTier) {
     pendingTier = target;
@@ -238,15 +268,17 @@ function processTier(rssi) {
   }
 }
 
-// Presence + vibration logic
+// ===================== PRESENCE + VIBRATION =====================
 let lastPresenceAlert = 0;
 let lastVibrationAlert = 0;
 
-function processPresence(pCount, pDist) {
-  presenceCountEl.innerText = pCount;
-  presenceDistanceEl.innerText = pDist > 0 ? pDist.toFixed(1) + " m" : "—";
+function processPresence(pCount, pDistMeters) {
+  const pDistFt = pDistMeters * 3.28084;
 
-  const inRange = pDist > 0 && pDist <= presenceConfig.rangeM;
+  presenceCountEl.innerText = pCount;
+  presenceDistanceEl.innerText = pDistFt > 0 ? pDistFt.toFixed(1) + " ft" : "—";
+
+  const inRange = pDistFt > 0 && pDistFt <= presenceConfig.rangeFt;
 
   if (!inRange || pCount === 0) {
     presenceStatusEl.innerText = "No one nearby";
@@ -288,7 +320,7 @@ function processVibration(vib) {
   }
 }
 
-// SSE
+// ===================== SSE =====================
 const evt = new EventSource("/events");
 
 evt.addEventListener("state", (e) => {
@@ -299,9 +331,11 @@ evt.addEventListener("state", (e) => {
   const pDist = parseFloat(data.presenceDistance);
   const vib = !!data.vibration;
 
-  rssiValueEl.innerText = isNaN(rssi) ? "—" : rssi.toFixed(1);
-  drawGraph(rssi);
-  processTier(rssi);
+  const feet = rssiToFeet(rssi);
+  distanceValueEl.innerText = feet.toFixed(1);
+
+  drawGraph(feet);
+  processTier(feet);
   processPresence(pCount, pDist);
   processVibration(vib);
 });
