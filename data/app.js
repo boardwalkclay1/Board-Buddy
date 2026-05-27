@@ -1,3 +1,4 @@
+// DOM refs
 const tierLabel = document.getElementById("tierLabel");
 const rssiValueEl = document.getElementById("rssiValue");
 const dots = [
@@ -21,9 +22,19 @@ const thFarVal = document.getElementById("thFarVal");
 const thTooFarVal = document.getElementById("thTooFarVal");
 const saveThresholdsBtn = document.getElementById("saveThresholds");
 
+const presenceStatusEl = document.getElementById("presenceStatus");
+const presenceCountEl = document.getElementById("presenceCount");
+const presenceDistanceEl = document.getElementById("presenceDistance");
+const presenceRange = document.getElementById("presenceRange");
+const presenceRangeVal = document.getElementById("presenceRangeVal");
+const presenceMode = document.getElementById("presenceMode");
+
+const vibrationStatusEl = document.getElementById("vibrationStatus");
+
 const graphCanvas = document.getElementById("rssiGraph");
 const gctx = graphCanvas.getContext("2d");
 
+// State
 let objectName = localStorage.getItem("boardBuddyName") || "My Board";
 nameEl.innerText = objectName;
 nameInput.value = objectName;
@@ -35,6 +46,18 @@ let thresholds = JSON.parse(localStorage.getItem("boardBuddyThresholds") || "nul
   tooFar: -90
 };
 
+let presenceConfig = JSON.parse(localStorage.getItem("boardBuddyPresence") || "null") || {
+  rangeM: 3,
+  mode: "twoPlus"
+};
+
+let rssiHistory = [];
+
+let currentTier = "INIT";
+let pendingTier = "INIT";
+let pendingStart = 0;
+
+// UI sync
 function syncThresholdUI() {
   thClose.value = thresholds.close;
   thAround.value = thresholds.around;
@@ -46,8 +69,16 @@ function syncThresholdUI() {
   thTooFarVal.innerText = thresholds.tooFar + " dBm";
 }
 
-syncThresholdUI();
+function syncPresenceUI() {
+  presenceRange.value = presenceConfig.rangeM;
+  presenceRangeVal.innerText = presenceConfig.rangeM + " m";
+  presenceMode.value = presenceConfig.mode;
+}
 
+syncThresholdUI();
+syncPresenceUI();
+
+// Handlers
 saveNameBtn.onclick = () => {
   objectName = nameInput.value || "My Board";
   nameEl.innerText = objectName;
@@ -70,6 +101,18 @@ saveThresholdsBtn.onclick = () => {
   localStorage.setItem("boardBuddyThresholds", JSON.stringify(thresholds));
 };
 
+presenceRange.addEventListener("input", () => {
+  presenceConfig.rangeM = parseInt(presenceRange.value);
+  syncPresenceUI();
+  localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
+});
+
+presenceMode.addEventListener("change", () => {
+  presenceConfig.mode = presenceMode.value;
+  localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
+});
+
+// Notifications + vibration
 if ("Notification" in window && Notification.permission === "default") {
   Notification.requestPermission();
 }
@@ -85,6 +128,7 @@ function vibrate() {
   navigator.vibrate(400);
 }
 
+// Tier logic
 function tierFromRSSI(rssi) {
   if (rssi <= -120) return "OUT_RANGE";
   if (rssi > thresholds.close) return "CLOSE";
@@ -152,8 +196,7 @@ function setTierUI(tier) {
   }
 }
 
-let rssiHistory = [];
-
+// Graph
 function drawGraph(rssi) {
   rssiHistory.push(rssi);
   if (rssiHistory.length > 60) rssiHistory.shift();
@@ -176,11 +219,7 @@ function drawGraph(rssi) {
   gctx.stroke();
 }
 
-// 2-second stability logic
-let currentTier = "INIT";
-let pendingTier = "INIT";
-let pendingStart = 0;
-
+// 2-second stability for tier changes
 function processTier(rssi) {
   const now = Date.now();
 
@@ -199,14 +238,72 @@ function processTier(rssi) {
   }
 }
 
+// Presence + vibration logic
+let lastPresenceAlert = 0;
+let lastVibrationAlert = 0;
+
+function processPresence(pCount, pDist) {
+  presenceCountEl.innerText = pCount;
+  presenceDistanceEl.innerText = pDist > 0 ? pDist.toFixed(1) + " m" : "—";
+
+  const inRange = pDist > 0 && pDist <= presenceConfig.rangeM;
+
+  if (!inRange || pCount === 0) {
+    presenceStatusEl.innerText = "No one nearby";
+    presenceStatusEl.style.color = "#999";
+    return;
+  }
+
+  if (pCount === 1 && presenceConfig.mode === "twoPlus") {
+    presenceStatusEl.innerText = "You are near your board";
+    presenceStatusEl.style.color = "#3ddc84";
+    return;
+  }
+
+  presenceStatusEl.innerText = `${pCount} people near your board`;
+  presenceStatusEl.style.color = "#d4af37";
+
+  const now = Date.now();
+  if (now - lastPresenceAlert > 5000) {
+    notify("Board Buddy", `${pCount} people near ${objectName}`);
+    vibrate();
+    lastPresenceAlert = now;
+  }
+}
+
+function processVibration(vib) {
+  if (vib) {
+    vibrationStatusEl.innerText = "Movement detected";
+    vibrationStatusEl.style.color = "#ff4444";
+
+    const now = Date.now();
+    if (now - lastVibrationAlert > 5000) {
+      notify("Board Buddy", `${objectName} is being moved`);
+      vibrate();
+      lastVibrationAlert = now;
+    }
+  } else {
+    vibrationStatusEl.innerText = "None";
+    vibrationStatusEl.style.color = "#999";
+  }
+}
+
+// SSE
 const evt = new EventSource("/events");
 
-evt.addEventListener("rssi", (e) => {
-  const rssi = parseFloat(e.data);
-  rssiValueEl.innerText = isNaN(rssi) ? "—" : rssi.toFixed(1);
+evt.addEventListener("state", (e) => {
+  const data = JSON.parse(e.data);
 
+  const rssi = parseFloat(data.rssi);
+  const pCount = parseInt(data.presenceCount);
+  const pDist = parseFloat(data.presenceDistance);
+  const vib = !!data.vibration;
+
+  rssiValueEl.innerText = isNaN(rssi) ? "—" : rssi.toFixed(1);
   drawGraph(rssi);
   processTier(rssi);
+  processPresence(pCount, pDist);
+  processVibration(vib);
 });
 
 evt.onerror = () => {
