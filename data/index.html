@@ -6,44 +6,54 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
 <div class="wrap">
 
+  <!-- HEADER -->
   <header class="header">
     <div class="logo">Board Buddy</div>
     <div class="object-name" id="objectName">My Board</div>
   </header>
 
+  <!-- DISTANCE / TIER SECTION -->
   <section class="tier-section">
     <div id="tierLabel" class="tier-label">Connecting…</div>
+
     <div class="tier-bar">
       <div id="tier1" class="tier-dot"></div>
       <div id="tier2" class="tier-dot"></div>
       <div id="tier3" class="tier-dot"></div>
       <div id="tier4" class="tier-dot"></div>
     </div>
+
     <div class="rssi-readout">
       Distance: <span id="distanceValue">—</span> ft
     </div>
   </section>
 
+  <!-- PRESENCE SECTION -->
   <section class="presence-section">
     <div class="presence-row">
       <span>Presence:</span>
       <span id="presenceStatus">No one nearby</span>
     </div>
+
     <div class="presence-row">
       <span>People:</span>
       <span id="presenceCount">0</span>
     </div>
+
     <div class="presence-row">
       <span>Distance:</span>
       <span id="presenceDistance">— ft</span>
     </div>
+
     <div class="presence-row">
       <span>Presence radius</span>
       <input id="presenceRange" type="range" min="3" max="20" step="1">
-      <span id="presenceRangeVal"></span>
+      <span id="presenceRangeVal">10 ft</span>
     </div>
+
     <div class="presence-row">
       <span>Presence mode</span>
       <select id="presenceMode">
@@ -53,7 +63,9 @@
     </div>
   </section>
 
+  <!-- OBJECT NAME + DISTANCE TIERS -->
   <section class="controls">
+
     <div class="control-block">
       <label>Object name</label>
       <div class="row">
@@ -64,35 +76,43 @@
 
     <div class="control-block">
       <label>Distance tiers (feet)</label>
+
       <div class="slider-row">
         <span>Close / Around</span>
         <input id="thClose" type="range" min="1" max="20" step="1">
         <span id="thCloseVal"></span>
       </div>
+
       <div class="slider-row">
         <span>Around / Getting far</span>
         <input id="thAround" type="range" min="5" max="40" step="1">
         <span id="thAroundVal"></span>
       </div>
+
       <div class="slider-row">
         <span>Getting far / Too far</span>
         <input id="thFar" type="range" min="10" max="60" step="1">
         <span id="thFarVal"></span>
       </div>
+
       <div class="slider-row">
         <span>Too far / Out of range</span>
         <input id="thTooFar" type="range" min="20" max="100" step="1">
         <span id="thTooFarVal"></span>
       </div>
+
       <button id="saveThresholds">Save thresholds</button>
     </div>
+
   </section>
 
+  <!-- GRAPH -->
   <section class="graph-section">
     <label>Distance trend</label>
     <canvas id="rssiGraph" width="360" height="80"></canvas>
   </section>
 
+  <!-- VIBRATION -->
   <section class="status-section">
     <div class="status-row">
       <span>Vibration:</span>
