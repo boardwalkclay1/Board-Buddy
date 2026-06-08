@@ -7,8 +7,8 @@
 const char* AP_SSID     = "BoardBuddy";
 const char* AP_PASSWORD = "boardbuddy";
 
-// If you later wire vibration / mmWave on 8266, set pins here:
-const int PIN_VIBRATION = 4;   // D2 on many NodeMCU boards (adjust as needed)
+// Radar is assumed on Serial (RX/TX of ESP8266 board)
+// Radar sends lines like: "P:2,D:3.4" (people, distance in meters)
 // ==================================================
 
 AsyncWebServer server(80);
@@ -17,12 +17,45 @@ AsyncEventSource events("/events");
 float smoothRSSI = -90.0f;
 unsigned long lastSample = 0;
 
-// Dummy presence/vibration for now (UI expects these fields)
+// Presence from radar
 int   presenceCount     = 0;
-float presenceDistance  = -1.0f;
+float presenceDistance  = -1.0f;  // meters
+
+// We keep vibration field for UI compatibility, but it’s always 0
 bool  vibrationDetected = false;
 
-// Get RSSI of first station connected to AP (ESP8266 way)
+// ===================== RADAR PARSING =====================
+void parseRadarLine(const String& line) {
+  int pIndex = line.indexOf("P:");
+  int dIndex = line.indexOf("D:");
+  if (pIndex == -1 || dIndex == -1) return;
+
+  int comma = line.indexOf(',', pIndex);
+  if (comma == -1) return;
+
+  String pStr = line.substring(pIndex + 2, comma);
+  String dStr = line.substring(dIndex + 2);
+
+  presenceCount    = pStr.toInt();
+  presenceDistance = dStr.toFloat();
+}
+
+void readRadar() {
+  static String buffer;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (buffer.length()) {
+        parseRadarLine(buffer);
+        buffer = "";
+      }
+    } else {
+      buffer += c;
+    }
+  }
+}
+
+// ===================== RSSI SMOOTHING =====================
 float getSmoothedRSSI() {
   struct station_info* stat = wifi_softap_get_station_info();
   float rssi;
@@ -30,52 +63,48 @@ float getSmoothedRSSI() {
   if (stat == nullptr) {
     rssi = -127; // no clients
   } else {
-    // Take the first station's RSSI
     rssi = stat->rssi;
     wifi_softap_free_station_info();
   }
 
-  // Exponential smoothing
   smoothRSSI = 0.8f * smoothRSSI + 0.2f * rssi;
   return smoothRSSI;
 }
 
+// ===================== SETUP =====================
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);   // also used for radar input
   delay(200);
 
-  pinMode(PIN_VIBRATION, INPUT);
-
-  // SPIFFS for UI
   if (!SPIFFS.begin()) {
     Serial.println("SPIFFS mount failed");
   }
 
-  // AP mode
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
-  // Serve UI from SPIFFS
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
-
-  // SSE endpoint
   server.addHandler(&events);
 
   server.begin();
-  Serial.println("Board Buddy ESP8266 started");
+  Serial.println("Board Buddy ESP8266 (radar + smooth RSSI) started");
 }
 
+// ===================== LOOP =====================
 void loop() {
+  // Read radar continuously
+  readRadar();
+
   unsigned long now = millis();
   if (now - lastSample < 500) return;  // sample every 500 ms
   lastSample = now;
 
   float rssi = getSmoothedRSSI();
 
-  // If you wire a vibration sensor later, read it here:
-  vibrationDetected = digitalRead(PIN_VIBRATION) == HIGH;
+  // vibrationDetected stays false (no device vibration sensor)
+  vibrationDetected = false;
 
   // Build JSON payload (matches your app.js expectations)
   String json = "{";
