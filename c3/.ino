@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>              // REQUIRED for ESP32 / ESP32‑C3
+#include <ESPAsyncWebServer.h>     // REQUIRED for async server
 #include <SPIFFS.h>
 
 // ===================== CONFIG =====================
@@ -12,8 +12,6 @@ const char* AP_PASSWORD = "boardbuddy";
 const char* UPLOAD_USER = "admin";
 const char* UPLOAD_PASS = "boardbuddy123";
 
-// Radar is assumed on Serial1 (ESP32-C3 UART)
-// Radar sends lines like: "P:2,D:3.4"
 // ==================================================
 
 AsyncWebServer server(80);
@@ -26,7 +24,6 @@ unsigned long lastSample = 0;
 int   presenceCount     = 0;
 float presenceDistance  = -1.0f;  // meters
 
-// Always 0 for UI compatibility
 bool vibrationDetected = false;
 
 // ===================== RADAR PARSING =====================
@@ -38,11 +35,8 @@ void parseRadarLine(const String& line) {
   int comma = line.indexOf(',', pIndex);
   if (comma == -1) return;
 
-  String pStr = line.substring(pIndex + 2, comma);
-  String dStr = line.substring(dIndex + 2);
-
-  presenceCount    = pStr.toInt();
-  presenceDistance = dStr.toFloat();
+  presenceCount    = line.substring(pIndex + 2, comma).toInt();
+  presenceDistance = line.substring(dIndex + 2).toFloat();
 }
 
 void readRadar() {
@@ -54,9 +48,7 @@ void readRadar() {
         parseRadarLine(buffer);
         buffer = "";
       }
-    } else {
-      buffer += c;
-    }
+    } else buffer += c;
   }
 }
 
@@ -68,7 +60,6 @@ float getSmoothedRSSI() {
   esp_wifi_ap_get_sta_list(&staList);
 
   float rssi = -127;
-
   if (staList.num > 0) {
     esp_wifi_sta_get_ap_info(&apInfo);
     rssi = apInfo.rssi;
@@ -81,11 +72,26 @@ float getSmoothedRSSI() {
 // ===================== SETUP =====================
 void setup() {
   Serial.begin(115200);
-  Serial1.begin(115200);   // Radar UART
+  Serial1.begin(115200);
   delay(200);
 
   if (!SPIFFS.begin(true)) {
     Serial.println("SPIFFS mount failed");
+  }
+
+  // Create upload.html if missing
+  if (!SPIFFS.exists("/upload.html")) {
+    File f = SPIFFS.open("/upload.html", FILE_WRITE);
+    f.print(
+      "<html><body>"
+      "<h2>BoardBuddy File Upload</h2>"
+      "<form method='POST' action='/upload' enctype='multipart/form-data'>"
+      "<input type='file' name='data'><br><br>"
+      "<input type='submit' value='Upload'>"
+      "</form>"
+      "</body></html>"
+    );
+    f.close();
   }
 
   WiFi.mode(WIFI_MODE_AP);
@@ -93,7 +99,7 @@ void setup() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
-  // Serve UI (index.html etc. from SPIFFS root)
+  // Serve UI
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
   // SSE
@@ -110,59 +116,35 @@ void setup() {
   server.on(
     "/upload",
     HTTP_POST,
-    [](AsyncWebServerRequest *request) {
+    [](AsyncWebServerRequest *request){
       if (!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
         return request->requestAuthentication();
-      request->send(200, "text/plain", "Upload complete. Refresh the page.");
+      request->send(200, "text/plain", "Upload complete.");
     },
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+
       if (!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
         return;
 
       String path = "/" + filename;
 
       if (index == 0) {
-        Serial.printf("UploadStart: %s\n", filename.c_str());
-        if (SPIFFS.exists(path)) {
-          SPIFFS.remove(path);
-        }
+        if (SPIFFS.exists(path)) SPIFFS.remove(path);
       }
 
       File f = SPIFFS.open(path, FILE_APPEND);
-      if (!f) {
-        Serial.println("File open failed");
-        return;
-      }
+      if (!f) return;
       f.write(data, len);
       f.close();
 
       if (final) {
-        Serial.printf("UploadEnd: %s (%u bytes)\n", filename.c_str(), index + len);
+        Serial.printf("Uploaded %s (%u bytes)\n", filename.c_str(), index + len);
       }
     }
   );
 
-  // Upload page HTML
-  File uploadPage = SPIFFS.open("/upload.html", FILE_WRITE);
-  if (uploadPage) {
-    uploadPage.print(
-      "<html><body>"
-      "<h2>BoardBuddy File Upload</h2>"
-      "<form method='POST' action='/upload' enctype='multipart/form-data'>"
-      "<input type='file' name='data'><br><br>"
-      "<input type='submit' value='Upload'>"
-      "</form>"
-      "</body></html>"
-    );
-    uploadPage.close();
-  } else {
-    Serial.println("Failed to create /upload.html");
-  }
-
-  // ===============================================================
-
   server.begin();
-  Serial.println("Board Buddy ESP32-C3 (radar + smooth RSSI + secure uploader) started");
+  Serial.println("BoardBuddy ESP32‑C3 started.");
 }
 
 // ===================== LOOP =====================
@@ -181,7 +163,7 @@ void loop() {
   json += "\"rssi\":" + String(rssi, 1);
   json += ",\"presenceCount\":" + String(presenceCount);
   json += ",\"presenceDistance\":" + String(presenceDistance, 2);
-  json += ",\"vibration\":" + String(vibrationDetected ? 1 : 0);
+  json += ",\"vibration\":0";
   json += "}";
 
   events.send(json.c_str(), "state", now);
