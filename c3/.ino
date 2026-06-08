@@ -93,7 +93,7 @@ void setup() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
-  // Serve UI
+  // Serve UI (index.html etc. from SPIFFS root)
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
   // SSE
@@ -101,30 +101,38 @@ void setup() {
 
   // ===================== SECURE SPIFFS UPLOADER =====================
   server.on("/upload", HTTP_GET, [](AsyncWebServerRequest *request){
-    if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+    if (!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
       return request->requestAuthentication();
 
     request->send(SPIFFS, "/upload.html", "text/html");
   });
 
-  server.on("/upload", HTTP_POST, 
+  server.on(
+    "/upload",
+    HTTP_POST,
     [](AsyncWebServerRequest *request) {
-      if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+      if (!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
         return request->requestAuthentication();
       request->send(200, "text/plain", "Upload complete. Refresh the page.");
     },
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-      if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+      if (!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
         return;
 
-      if (!index) {
+      String path = "/" + filename;
+
+      if (index == 0) {
         Serial.printf("UploadStart: %s\n", filename.c_str());
-        SPIFFS.remove("/" + filename);
-        File f = SPIFFS.open("/" + filename, FILE_WRITE);
-        f.close();
+        if (SPIFFS.exists(path)) {
+          SPIFFS.remove(path);
+        }
       }
 
-      File f = SPIFFS.open("/" + filename, FILE_APPEND);
+      File f = SPIFFS.open(path, FILE_APPEND);
+      if (!f) {
+        Serial.println("File open failed");
+        return;
+      }
       f.write(data, len);
       f.close();
 
@@ -136,16 +144,20 @@ void setup() {
 
   // Upload page HTML
   File uploadPage = SPIFFS.open("/upload.html", FILE_WRITE);
-  uploadPage.print(
-    "<html><body>"
-    "<h2>BoardBuddy File Upload</h2>"
-    "<form method='POST' action='/upload' enctype='multipart/form-data'>"
-    "<input type='file' name='data'><br><br>"
-    "<input type='submit' value='Upload'>"
-    "</form>"
-    "</body></html>"
-  );
-  uploadPage.close();
+  if (uploadPage) {
+    uploadPage.print(
+      "<html><body>"
+      "<h2>BoardBuddy File Upload</h2>"
+      "<form method='POST' action='/upload' enctype='multipart/form-data'>"
+      "<input type='file' name='data'><br><br>"
+      "<input type='submit' value='Upload'>"
+      "</form>"
+      "</body></html>"
+    );
+    uploadPage.close();
+  } else {
+    Serial.println("Failed to create /upload.html");
+  }
 
   // ===============================================================
 
