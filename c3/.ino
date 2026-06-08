@@ -8,8 +8,12 @@
 const char* AP_SSID     = "BoardBuddy";
 const char* AP_PASSWORD = "boardbuddy";
 
-// Radar is assumed on Serial1 (recommended for ESP32-C3)
-// Radar sends lines like: "P:2,D:3.4" (people, distance in meters)
+// Password required to access /upload
+const char* UPLOAD_USER = "admin";
+const char* UPLOAD_PASS = "boardbuddy123";
+
+// Radar is assumed on Serial1 (ESP32-C3 UART)
+// Radar sends lines like: "P:2,D:3.4"
 // ==================================================
 
 AsyncWebServer server(80);
@@ -61,14 +65,11 @@ float getSmoothedRSSI() {
   wifi_sta_list_t staList;
   wifi_ap_record_t apInfo;
 
-  // Get list of connected stations
   esp_wifi_ap_get_sta_list(&staList);
 
   float rssi = -127;
 
   if (staList.num > 0) {
-    // Only use the first connected device
-    wifi_sta_info_t sta = staList.sta[0];
     esp_wifi_sta_get_ap_info(&apInfo);
     rssi = apInfo.rssi;
   }
@@ -92,28 +93,78 @@ void setup() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
+  // Serve UI
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+
+  // SSE
   server.addHandler(&events);
 
+  // ===================== SECURE SPIFFS UPLOADER =====================
+  server.on("/upload", HTTP_GET, [](AsyncWebServerRequest *request){
+    if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+      return request->requestAuthentication();
+
+    request->send(SPIFFS, "/upload.html", "text/html");
+  });
+
+  server.on("/upload", HTTP_POST, 
+    [](AsyncWebServerRequest *request) {
+      if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+        return request->requestAuthentication();
+      request->send(200, "text/plain", "Upload complete. Refresh the page.");
+    },
+    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+      if(!request->authenticate(UPLOAD_USER, UPLOAD_PASS))
+        return;
+
+      if (!index) {
+        Serial.printf("UploadStart: %s\n", filename.c_str());
+        SPIFFS.remove("/" + filename);
+        File f = SPIFFS.open("/" + filename, FILE_WRITE);
+        f.close();
+      }
+
+      File f = SPIFFS.open("/" + filename, FILE_APPEND);
+      f.write(data, len);
+      f.close();
+
+      if (final) {
+        Serial.printf("UploadEnd: %s (%u bytes)\n", filename.c_str(), index + len);
+      }
+    }
+  );
+
+  // Upload page HTML
+  File uploadPage = SPIFFS.open("/upload.html", FILE_WRITE);
+  uploadPage.print(
+    "<html><body>"
+    "<h2>BoardBuddy File Upload</h2>"
+    "<form method='POST' action='/upload' enctype='multipart/form-data'>"
+    "<input type='file' name='data'><br><br>"
+    "<input type='submit' value='Upload'>"
+    "</form>"
+    "</body></html>"
+  );
+  uploadPage.close();
+
+  // ===============================================================
+
   server.begin();
-  Serial.println("Board Buddy ESP32-C3 (radar + smooth RSSI) started");
+  Serial.println("Board Buddy ESP32-C3 (radar + smooth RSSI + secure uploader) started");
 }
 
 // ===================== LOOP =====================
 void loop() {
-  // Read radar continuously
   readRadar();
 
   unsigned long now = millis();
-  if (now - lastSample < 500) return;  // sample every 500 ms
+  if (now - lastSample < 500) return;
   lastSample = now;
 
   float rssi = getSmoothedRSSI();
 
-  // Always false (no vibration sensor)
   vibrationDetected = false;
 
-  // Build JSON payload
   String json = "{";
   json += "\"rssi\":" + String(rssi, 1);
   json += ",\"presenceCount\":" + String(presenceCount);
