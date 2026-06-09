@@ -1,0 +1,27 @@
+body {
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)),
+              url('board-buddy.jpg') no-repeat center center fixed;
+  background-size: cover;
+  font-family: 'Segoe UI', sans-serif;
+  color: #fff;
+}
+
+.wrap {
+  backdrop-filter: blur(6px);
+  padding-bottom: 40px;
+}
+
+.header {
+  text-align: center;
+  padding: 20px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #ff2a2a;
+  text-shadow: 0 0 8px #000;
+}
+
+.tier-label, .presence-row span, .status-row span {
+  text-shadow: 0 0 6px #000;
+}
