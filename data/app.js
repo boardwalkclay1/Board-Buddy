@@ -1,345 +1,201 @@
-// DOM refs
+// =========================
+// CONFIG
+// =========================
+let rssiHistory = [];
+const maxPoints = 60;
+
+// Default thresholds (feet)
+let thClose = 5;
+let thAround = 12;
+let thFar = 25;
+let thTooFar = 40;
+
+// =========================
+// DOM SHORTCUTS
+// =========================
 const tierLabel = document.getElementById("tierLabel");
-const distanceValueEl = document.getElementById("distanceValue");
-const dots = [
-  document.getElementById("tier1"),
-  document.getElementById("tier2"),
-  document.getElementById("tier3"),
-  document.getElementById("tier4")
-];
+const distanceValue = document.getElementById("distanceValue");
+const presenceStatus = document.getElementById("presenceStatus");
+const presenceCount = document.getElementById("presenceCount");
+const presenceDistance = document.getElementById("presenceDistance");
+const vibrationStatus = document.getElementById("vibrationStatus");
 
-const nameEl = document.getElementById("objectName");
-const nameInput = document.getElementById("nameInput");
-const saveNameBtn = document.getElementById("saveName");
+const thCloseSlider = document.getElementById("thClose");
+const thAroundSlider = document.getElementById("thAround");
+const thFarSlider = document.getElementById("thFar");
+const thTooFarSlider = document.getElementById("thTooFar");
 
-// Distance tier sliders (FEET)
-const thClose = document.getElementById("thClose");
-const thAround = document.getElementById("thAround");
-const thFar = document.getElementById("thFar");
-const thTooFar = document.getElementById("thTooFar");
 const thCloseVal = document.getElementById("thCloseVal");
 const thAroundVal = document.getElementById("thAroundVal");
 const thFarVal = document.getElementById("thFarVal");
 const thTooFarVal = document.getElementById("thTooFarVal");
-const saveThresholdsBtn = document.getElementById("saveThresholds");
 
-// Presence
-const presenceStatusEl = document.getElementById("presenceStatus");
-const presenceCountEl = document.getElementById("presenceCount");
-const presenceDistanceEl = document.getElementById("presenceDistance");
-const presenceRange = document.getElementById("presenceRange");
-const presenceRangeVal = document.getElementById("presenceRangeVal");
-const presenceMode = document.getElementById("presenceMode");
+const nameInput = document.getElementById("nameInput");
+const objectName = document.getElementById("objectName");
 
-// Vibration
-const vibrationStatusEl = document.getElementById("vibrationStatus");
+// =========================
+// LOAD SAVED SETTINGS
+// =========================
+function loadSettings() {
+  const savedName = localStorage.getItem("bb_name");
+  if (savedName) {
+    objectName.textContent = savedName;
+    nameInput.value = savedName;
+  }
 
-// Graph
-const graphCanvas = document.getElementById("rssiGraph");
-const gctx = graphCanvas.getContext("2d");
+  const saved = JSON.parse(localStorage.getItem("bb_thresholds"));
+  if (saved) {
+    thClose = saved.thClose;
+    thAround = saved.thAround;
+    thFar = saved.thFar;
+    thTooFar = saved.thTooFar;
+  }
 
-// ===================== STATE =====================
-let objectName = localStorage.getItem("boardBuddyName") || "My Board";
-nameEl.innerText = objectName;
-nameInput.value = objectName;
+  thCloseSlider.value = thClose;
+  thAroundSlider.value = thAround;
+  thFarSlider.value = thFar;
+  thTooFarSlider.value = thTooFar;
 
-// Distance thresholds in FEET
-let thresholds = JSON.parse(localStorage.getItem("boardBuddyThresholds") || "null") || {
-  close: 5,
-  around: 15,
-  far: 30,
-  tooFar: 50
+  thCloseVal.textContent = thClose + " ft";
+  thAroundVal.textContent = thAround + " ft";
+  thFarVal.textContent = thFar + " ft";
+  thTooFarVal.textContent = thTooFar + " ft";
+}
+
+// =========================
+// SAVE SETTINGS
+// =========================
+document.getElementById("saveName").onclick = () => {
+  const name = nameInput.value.trim();
+  if (name.length > 0) {
+    localStorage.setItem("bb_name", name);
+    objectName.textContent = name;
+  }
 };
 
-// Presence config (FEET)
-let presenceConfig = JSON.parse(localStorage.getItem("boardBuddyPresence") || "null") || {
-  rangeFt: 10,
-  mode: "twoPlus"
+document.getElementById("saveThresholds").onclick = () => {
+  thClose = parseInt(thCloseSlider.value);
+  thAround = parseInt(thAroundSlider.value);
+  thFar = parseInt(thFarSlider.value);
+  thTooFar = parseInt(thTooFarSlider.value);
+
+  localStorage.setItem(
+    "bb_thresholds",
+    JSON.stringify({ thClose, thAround, thFar, thTooFar })
+  );
+
+  thCloseVal.textContent = thClose + " ft";
+  thAroundVal.textContent = thAround + " ft";
+  thFarVal.textContent = thFar + " ft";
+  thTooFarVal.textContent = thTooFar + " ft";
 };
 
-let distanceHistory = [];
-
-let currentTier = "INIT";
-let pendingTier = "INIT";
-let pendingStart = 0;
-
-// ===================== RSSI → FEET CONVERSION =====================
+// =========================
+// RSSI → Distance
+// =========================
 function rssiToFeet(rssi) {
-  const RSSI0 = -45; // RSSI at 1 foot (calibrate)
-  const n = 2.0;     // environmental factor
-
-  let meters = Math.pow(10, (RSSI0 - rssi) / (10 * n));
-  let feet = meters * 3.28084;
-
-  if (feet < 0) feet = 0;
-  if (feet > 200) feet = 200;
-
-  return feet;
+  // Tuned for BoardBuddy
+  const txPower = -59;
+  const ratio = (txPower - rssi) / 20;
+  return Math.pow(10, ratio) * 3.2;
 }
 
-// ===================== UI SYNC =====================
-function syncThresholdUI() {
-  thClose.value = thresholds.close;
-  thAround.value = thresholds.around;
-  thFar.value = thresholds.far;
-  thTooFar.value = thresholds.tooFar;
+// =========================
+// TIER UPDATE
+// =========================
+function updateTiers(dist) {
+  const t1 = document.getElementById("tier1");
+  const t2 = document.getElementById("tier2");
+  const t3 = document.getElementById("tier3");
+  const t4 = document.getElementById("tier4");
 
-  thCloseVal.innerText = thresholds.close + " ft";
-  thAroundVal.innerText = thresholds.around + " ft";
-  thFarVal.innerText = thresholds.far + " ft";
-  thTooFarVal.innerText = thresholds.tooFar + " ft";
-}
+  t1.classList.remove("active");
+  t2.classList.remove("active");
+  t3.classList.remove("active");
+  t4.classList.remove("active");
 
-function syncPresenceUI() {
-  presenceRange.value = presenceConfig.rangeFt;
-  presenceRangeVal.innerText = presenceConfig.rangeFt + " ft";
-  presenceMode.value = presenceConfig.mode;
-}
-
-syncThresholdUI();
-syncPresenceUI();
-
-// ===================== HANDLERS =====================
-saveNameBtn.onclick = () => {
-  objectName = nameInput.value || "My Board";
-  nameEl.innerText = objectName;
-  localStorage.setItem("boardBuddyName", objectName);
-};
-
-function updateSliderLabels() {
-  thresholds.close = parseInt(thClose.value);
-  thresholds.around = parseInt(thAround.value);
-  thresholds.far = parseInt(thFar.value);
-  thresholds.tooFar = parseInt(thTooFar.value);
-  syncThresholdUI();
-}
-
-[thClose, thAround, thFar, thTooFar].forEach(sl => {
-  sl.addEventListener("input", updateSliderLabels);
-});
-
-saveThresholdsBtn.onclick = () => {
-  localStorage.setItem("boardBuddyThresholds", JSON.stringify(thresholds));
-};
-
-presenceRange.addEventListener("input", () => {
-  presenceConfig.rangeFt = parseInt(presenceRange.value);
-  syncPresenceUI();
-  localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
-});
-
-presenceMode.addEventListener("change", () => {
-  presenceConfig.mode = presenceMode.value;
-  localStorage.setItem("boardBuddyPresence", JSON.stringify(presenceConfig));
-});
-
-// ===================== NOTIFICATIONS =====================
-if ("Notification" in window && Notification.permission === "default") {
-  Notification.requestPermission();
-}
-
-function notify(title, body) {
-  if (Notification.permission !== "granted") return;
-  new Notification(title, { body });
-}
-
-function vibrate() {
-  if ("vibrate" in navigator) navigator.vibrate(400);
-}
-
-// ===================== TIER LOGIC (FEET) =====================
-function tierFromFeet(ft) {
-  if (ft >= thresholds.tooFar) return "OUT_RANGE";
-  if (ft >= thresholds.far) return "TOO_FAR";
-  if (ft >= thresholds.around) return "GETTING_FAR";
-  if (ft >= thresholds.close) return "AROUND";
-  return "CLOSE";
-}
-
-function applyHysteresis(prev, ft) {
-  const margin = 2;
-
-  switch (prev) {
-    case "CLOSE":
-      if (ft > thresholds.close + margin) return tierFromFeet(ft);
-      return "CLOSE";
-
-    case "AROUND":
-      if (ft < thresholds.close - margin || ft > thresholds.around + margin)
-        return tierFromFeet(ft);
-      return "AROUND";
-
-    case "GETTING_FAR":
-      if (ft < thresholds.around - margin || ft > thresholds.far + margin)
-        return tierFromFeet(ft);
-      return "GETTING_FAR";
-
-    case "TOO_FAR":
-      if (ft < thresholds.far - margin || ft > thresholds.tooFar + margin)
-        return tierFromFeet(ft);
-      return "TOO_FAR";
-
-    case "OUT_RANGE":
-      if (ft < thresholds.tooFar - margin) return tierFromFeet(ft);
-      return "OUT_RANGE";
-
-    default:
-      return tierFromFeet(ft);
+  if (dist < thClose) {
+    tierLabel.textContent = "Close";
+    t1.classList.add("active");
+  } else if (dist < thAround) {
+    tierLabel.textContent = "Around";
+    t1.classList.add("active");
+    t2.classList.add("active");
+  } else if (dist < thFar) {
+    tierLabel.textContent = "Getting Far";
+    t1.classList.add("active");
+    t2.classList.add("active");
+    t3.classList.add("active");
+  } else if (dist < thTooFar) {
+    tierLabel.textContent = "Too Far";
+    t1.classList.add("active");
+    t2.classList.add("active");
+    t3.classList.add("active");
+    t4.classList.add("active");
+  } else {
+    tierLabel.textContent = "Out of Range";
   }
 }
 
-function setTierUI(tier) {
-  dots.forEach(d => d.className = "tier-dot");
+// =========================
+// GRAPH
+// =========================
+function drawGraph() {
+  const canvas = document.getElementById("rssiGraph");
+  const ctx = canvas.getContext("2d");
 
-  switch (tier) {
-    case "CLOSE":
-      tierLabel.innerText = `${objectName} is close by`;
-      dots[0].classList.add("active-close");
-      break;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    case "AROUND":
-      tierLabel.innerText = `${objectName} is around you`;
-      dots[1].classList.add("active-around");
-      break;
+  ctx.strokeStyle = "#ff2a2a";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
 
-    case "GETTING_FAR":
-      tierLabel.innerText = `${objectName} is getting far`;
-      dots[2].classList.add("active-far");
-      notify("Board Buddy", `${objectName} is getting far`);
-      vibrate();
-      break;
-
-    case "TOO_FAR":
-      tierLabel.innerText = `${objectName} is too far`;
-      dots[3].classList.add("active-too");
-      notify("Board Buddy", `${objectName} is too far`);
-      vibrate();
-      break;
-
-    case "OUT_RANGE":
-      tierLabel.innerText = `${objectName} is OUT OF RANGE`;
-      dots[3].classList.add("active-too");
-      notify("Board Buddy ALERT", `${objectName} is OUT OF RANGE`);
-      vibrate();
-      break;
-  }
-}
-
-// ===================== GRAPH (FEET) =====================
-function drawGraph(ft) {
-  distanceHistory.push(ft);
-  if (distanceHistory.length > 60) distanceHistory.shift();
-
-  gctx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
-  gctx.strokeStyle = "#d4af37";
-  gctx.lineWidth = 2;
-  gctx.beginPath();
-
-  const minF = 0;
-  const maxF = 100;
-
-  distanceHistory.forEach((v, i) => {
-    const x = (i / 59) * (graphCanvas.width - 4) + 2;
-    const norm = (v - minF) / (maxF - minF);
-    const y = graphCanvas.height - 4 - norm * (graphCanvas.height - 8);
-    if (i === 0) gctx.moveTo(x, y);
-    else gctx.lineTo(x, y);
+  rssiHistory.forEach((v, i) => {
+    const x = (i / maxPoints) * canvas.width;
+    const y = canvas.height - (v / 80) * canvas.height;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
   });
 
-  gctx.stroke();
+  ctx.stroke();
 }
 
-// ===================== 2-SECOND STABILITY =====================
-function processTier(ft) {
-  const now = Date.now();
+// =========================
+// MAIN POLLING LOOP
+// =========================
+function poll() {
+  fetch("/events")
+    .then((r) => r.json())
+    .then((j) => {
+      const dist = rssiToFeet(j.rssi);
+      const distFt = dist.toFixed(1);
 
-  let target = tierFromFeet(ft);
-  target = applyHysteresis(currentTier, ft);
+      distanceValue.textContent = distFt;
+      updateTiers(dist);
 
-  if (target !== pendingTier) {
-    pendingTier = target;
-    pendingStart = now;
-    return;
-  }
+      // Graph
+      rssiHistory.push(dist);
+      if (rssiHistory.length > maxPoints) rssiHistory.shift();
+      drawGraph();
 
-  if (now - pendingStart >= 2000 && target !== currentTier) {
-    currentTier = target;
-    setTierUI(currentTier);
-  }
+      // Presence
+      presenceCount.textContent = j.presenceCount;
+      presenceDistance.textContent = j.presenceDistance.toFixed(1) + " ft";
+
+      if (j.presenceCount > 0) {
+        presenceStatus.textContent = "Someone nearby";
+      } else {
+        presenceStatus.textContent = "No one nearby";
+      }
+
+      // Vibration
+      vibrationStatus.textContent = j.vibration ? "Active" : "None";
+    })
+    .catch(() => {
+      tierLabel.textContent = "Disconnected";
+    });
 }
 
-// ===================== PRESENCE + VIBRATION =====================
-let lastPresenceAlert = 0;
-let lastVibrationAlert = 0;
-
-function processPresence(pCount, pDistMeters) {
-  const pDistFt = pDistMeters * 3.28084;
-
-  presenceCountEl.innerText = pCount;
-  presenceDistanceEl.innerText = pDistFt > 0 ? pDistFt.toFixed(1) + " ft" : "—";
-
-  const inRange = pDistFt > 0 && pDistFt <= presenceConfig.rangeFt;
-
-  if (!inRange || pCount === 0) {
-    presenceStatusEl.innerText = "No one nearby";
-    presenceStatusEl.style.color = "#999";
-    return;
-  }
-
-  if (pCount === 1 && presenceConfig.mode === "twoPlus") {
-    presenceStatusEl.innerText = "You are near your board";
-    presenceStatusEl.style.color = "#3ddc84";
-    return;
-  }
-
-  presenceStatusEl.innerText = `${pCount} people near your board`;
-  presenceStatusEl.style.color = "#d4af37";
-
-  const now = Date.now();
-  if (now - lastPresenceAlert > 5000) {
-    notify("Board Buddy", `${pCount} people near ${objectName}`);
-    vibrate();
-    lastPresenceAlert = now;
-  }
-}
-
-function processVibration(vib) {
-  if (vib) {
-    vibrationStatusEl.innerText = "Movement detected";
-    vibrationStatusEl.style.color = "#ff4444";
-
-    const now = Date.now();
-    if (now - lastVibrationAlert > 5000) {
-      notify("Board Buddy", `${objectName} is being moved`);
-      vibrate();
-      lastVibrationAlert = now;
-    }
-  } else {
-    vibrationStatusEl.innerText = "None";
-    vibrationStatusEl.style.color = "#999";
-  }
-}
-
-// ===================== SSE =====================
-const evt = new EventSource("/events");
-
-evt.addEventListener("state", (e) => {
-  const data = JSON.parse(e.data);
-
-  const rssi = parseFloat(data.rssi);
-  const pCount = parseInt(data.presenceCount);
-  const pDist = parseFloat(data.presenceDistance);
-  const vib = !!data.vibration;
-
-  const feet = rssiToFeet(rssi);
-  distanceValueEl.innerText = feet.toFixed(1);
-
-  drawGraph(feet);
-  processTier(feet);
-  processPresence(pCount, pDist);
-  processVibration(vib);
-});
-
-evt.onerror = () => {
-  tierLabel.innerText = "Disconnected…";
-};
+loadSettings();
+setInterval(poll, 500);
+poll();
