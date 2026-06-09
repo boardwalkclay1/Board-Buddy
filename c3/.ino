@@ -14,15 +14,16 @@ const char* UPLOAD_PASS = "boardbuddy123";
 
 WebServer server(80);
 
-float smoothRSSI = -90.0f;
-unsigned long lastSample = 0;
+float smoothRSSI       = -70.0f;   // smoothed phone RSSI
+int   presenceCount    = 0;        // from radar
+float presenceDistance = -1.0f;    // from radar (feet)
 
-int   presenceCount     = 0;
-float presenceDistance  = -1.0f;
+bool vibrationDetected = false;    // hook this to a real sensor later
 
-bool vibrationDetected = false;
+File uploadFile;
 
 // ===================== RADAR PARSING =====================
+// Expects lines like: P:3,D:4.2
 void parseRadarLine(const String& line) {
   int pIndex = line.indexOf("P:");
   int dIndex = line.indexOf("D:");
@@ -44,36 +45,72 @@ void readRadar() {
         parseRadarLine(buffer);
         buffer = "";
       }
-    } else buffer += c;
+    } else {
+      buffer += c;
+      if (buffer.length() > 256) buffer = "";  // safety reset
+    }
   }
 }
 
-// ===================== RSSI SMOOTHING =====================
-float getSmoothedRSSI() {
+// ===================== WIFI RSSI (PHONE → ESP) =====================
+// Get RSSI of the first connected station (phone) in AP mode
+float getPhoneRSSI() {
   wifi_sta_list_t staList;
-  wifi_ap_record_t apInfo;
+  wifi_sta_info_t staInfo[10];
 
-  esp_wifi_ap_get_sta_list(&staList);
-
-  float rssi = -127;
-  if (staList.num > 0) {
-    esp_wifi_sta_get_ap_info(&apInfo);
-    rssi = apInfo.rssi;
+  if (esp_wifi_ap_get_sta_list(&staList) != ESP_OK) {
+    return -90.0f; // no info
   }
 
-  smoothRSSI = 0.8f * smoothRSSI + 0.2f * rssi;
+  if (staList.num == 0) {
+    return -90.0f; // no phone connected
+  }
+
+  // Copy station info
+  memcpy(staInfo, staList.sta, sizeof(wifi_sta_info_t) * staList.num);
+
+  // Assume one phone; use first station
+  int8_t rssi = staInfo[0].rssi;
+  return (float)rssi;
+}
+
+// Smooth RSSI for stability
+float getSmoothedRSSI() {
+  float raw = getPhoneRSSI();
+  smoothRSSI = 0.85f * smoothRSSI + 0.15f * raw;
   return smoothRSSI;
+}
+
+// ===================== RSSI → DISTANCE (FEET) =====================
+float rssiToFeet(float rssi) {
+  float txPower = -59.0f; // typical RSSI at 1m
+  float ratio   = (txPower - rssi) / 20.0f;
+  float meters  = pow(10.0f, ratio);
+  return meters * 3.28084f;
+}
+
+// ===================== FUSED DISTANCE =====================
+// Combine WiFi distance + radar distance for better accuracy
+float fusedDistance(float wifiFeet, float radarFeet) {
+  if (radarFeet < 0) return wifiFeet;          // no radar reading
+  return (wifiFeet * 0.6f) + (radarFeet * 0.4f);
 }
 
 // ===================== EVENTS ENDPOINT =====================
 void handleEvents() {
-  float rssi = getSmoothedRSSI();
+  float rssi      = getSmoothedRSSI();
+  float wifiFeet  = rssiToFeet(rssi);
+  float radarFeet = presenceDistance;
+  float fused     = fusedDistance(wifiFeet, radarFeet);
 
   String json = "{";
   json += "\"rssi\":" + String(rssi, 1);
+  json += ",\"wifiFeet\":" + String(wifiFeet, 1);
+  json += ",\"radarFeet\":" + String(radarFeet, 1);
+  json += ",\"distance\":" + String(fused, 1);
   json += ",\"presenceCount\":" + String(presenceCount);
   json += ",\"presenceDistance\":" + String(presenceDistance, 2);
-  json += ",\"vibration\":0";
+  json += ",\"vibration\":" + String(vibrationDetected ? 1 : 0);
   json += "}";
 
   server.send(200, "application/json", json);
@@ -104,17 +141,19 @@ void handleFileUpload() {
   if (upload.status == UPLOAD_FILE_START) {
     String filename = "/" + upload.filename;
     if (SPIFFS.exists(filename)) SPIFFS.remove(filename);
+    uploadFile = SPIFFS.open(filename, FILE_WRITE);
   }
 
   if (upload.status == UPLOAD_FILE_WRITE) {
-    File f = SPIFFS.open("/" + upload.filename, FILE_APPEND);
-    if (f) {
-      f.write(upload.buf, upload.currentSize);
-      f.close();
+    if (uploadFile) {
+      uploadFile.write(upload.buf, upload.currentSize);
     }
   }
 
   if (upload.status == UPLOAD_FILE_END) {
+    if (uploadFile) {
+      uploadFile.close();
+    }
     server.send(200, "text/plain", "Upload complete.");
   }
 }
@@ -124,7 +163,9 @@ void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
 
-  SPIFFS.begin(true);
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS mount failed");
+  }
 
   // Create upload.html if missing
   if (!SPIFFS.exists("/upload.html")) {
@@ -197,8 +238,4 @@ void setup() {
 void loop() {
   server.handleClient();
   readRadar();
-
-  if (millis() - lastSample > 500) {
-    lastSample = millis();
-  }
 }
