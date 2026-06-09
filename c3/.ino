@@ -144,7 +144,7 @@ void setup() {
   WiFi.mode(WIFI_MODE_AP);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
 
-  // Serve index.html manually
+  // Serve index.html
   server.on("/", HTTP_GET, []() {
     File f = SPIFFS.open("/index.html", "r");
     if (!f) {
@@ -152,6 +152,37 @@ void setup() {
       return;
     }
     server.streamFile(f, "text/html");
+    f.close();
+  });
+
+  // Serve static assets
+  server.on("/style.css", HTTP_GET, []() {
+    File f = SPIFFS.open("/style.css", "r");
+    if (!f) {
+      server.send(404, "text/plain", "style.css missing");
+      return;
+    }
+    server.streamFile(f, "text/css");
+    f.close();
+  });
+
+  server.on("/app.js", HTTP_GET, []() {
+    File f = SPIFFS.open("/app.js", "r");
+    if (!f) {
+      server.send(404, "text/plain", "app.js missing");
+      return;
+    }
+    server.streamFile(f, "application/javascript");
+    f.close();
+  });
+
+  server.on("/board-buddy.jpg", HTTP_GET, []() {
+    File f = SPIFFS.open("/board-buddy.jpg", "r");
+    if (!f) {
+      server.send(404, "text/plain", "board-buddy.jpg missing");
+      return;
+    }
+    server.streamFile(f, "image/jpeg");
     f.close();
   });
 
